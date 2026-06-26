@@ -12,8 +12,6 @@ def train_model(
         optim_policy_network,
         optim_value_network,
         max_token: int = 100,
-        model_id: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        reward_model_id: str = "martin-ha/toxic-comment-model",
         n_epochs: int = 10,
         mini_batch_size: int = 8,
         clip_coef: float = 0.2,
@@ -44,19 +42,12 @@ def train_model(
 
         generated_only_ids = generated_sequence[0, prompt_length:]
         full_generated_text = tokenizer.decode(generated_only_ids, skip_special_tokens=True)
-        if verbose: print(f"Generated sequence: \n {full_generated_text} \n")
+
+        if verbose:
+            print(f"Prompt: \n {prompt_text} \n")
+            print(f"Generated sequence: \n {full_generated_text} \n")
 
         # Get the final reward
-        '''
-        predictions = reward_model(full_generated_text, top_k=None)
-        final_reward = 0.0
-        for pred in predictions:
-            if pred['label'] in ['toxic', 'obscene', 'insult']:
-                final_reward += pred['score']
-
-        final_reward = final_reward / 3.0 
-        final_reward = max(min(final_reward, 1.0), -1.0)
-        '''
         final_reward = reward_model(full_generated_text)
 
         if verbose: print(f"Reward: {final_reward:.4f} \n")
@@ -107,7 +98,10 @@ def train_model(
             # append sparse rewards, 0 for intermediate words, reward for last word
             base_reward = final_reward if t == num_actions - 1 else 0.0
 
-            # Subtract the penalty from the reward!
+            # subtract the penalty from the reward as a way to punish deviation
+            if verbose:
+                if kl_coef * kl_penalty != 0:
+                    print("Successfully altered model")
             step_reward = base_reward - (kl_coef * kl_penalty)
 
             prompt_trajectory.append(
@@ -172,7 +166,7 @@ def train_model(
 
             device = next(model.parameters()).device
 
-            # Move all 6 tensors to the GPU
+            # Move all 6 tensors to the GPU if available
             mb_states = mb_states.to(device)
             mb_actions = mb_actions.to(device)
             mb_old_log_probs = mb_old_log_probs.to(device)
@@ -215,26 +209,14 @@ def train_model(
             value_loss_clipped = torch.nn.functional.mse_loss(value_clipped, mb_returns, reduction='none')
             loss_value = torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
-            # 1. Zero ALL gradients first
+
             optim_policy_network.zero_grad()
             optim_value_network.zero_grad()
-
             loss_policy.backward(retain_graph=True)
             loss_value.backward()
             optim_policy_network.step()
             optim_value_network.step()
-
-    print("Finished training saving model")
-    ''' # save model
-    output_dir = "/content/drive/MyDrive/altered-llm"
-    os.makedirs(output_dir, exist_ok=True)
-    model.save_pretrained(
-        output_dir,
-        safe_serialization=True  # Uses .safetensors instead of .pth (faster and safer!)
-    )
-    # save tokenizer
-    tokenizer.save_pretrained(output_dir)
-    print("Save complete!")'''
+            if verbose: print("Finish optimizing and updating")
 
 
 
